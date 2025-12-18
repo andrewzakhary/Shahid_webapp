@@ -9,11 +9,45 @@ app.secret_key = "change-this-to-any-random-string"
 DB = "data.db"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
+seasons=['الاول','الثاني','الثالث','الرابع','الخامس','السادس','السابع','الثامن','التاسع','العاشر',
+         'الحادي-عشر','الثاني-عشر','الثالث-عشر','الرابع-عشر','الخامس-عشر','السادس-عشر','السابع-عشر','الثامن-عشر','التاسع-عشر','العشرون']
 
-
-
+MAX_RETRIES=4
 # ---------------- DATABASE ----------------
 OMDB_API_KEY = "6c38b544"
+API_KEY='3536b9a5811d681b718ece4058a6e85f'
+
+def get_media_poster(api_key, title, media_type="movie", season_number=None):
+    base_url = "https://api.themoviedb.org/3"
+    img_config_url = "https://image.tmdb.org/t/p/w500" # w500 is a standard width
+    
+    # 1. Search for the Media ID
+    search_url = f"{base_url}/search/{media_type}"
+    params = {"api_key": api_key, "query": title}
+    
+    search_res = requests.get(search_url, params=params).json()
+    if not search_res.get('results'):
+        return "No results found."
+    
+    media_id = search_res['results'][0]['id']
+    
+    # 2. Get the Poster Path
+    if media_type == "tv" and season_number is not None:
+        # Fetch specific season details
+        season_url = f"{base_url}/tv/{media_id}/season/{season_number}"
+        res = requests.get(season_url, params={"api_key": api_key}).json()
+        poster_path = res.get('poster_path')
+        release_date = search_res['results'][0].get('release_date')
+    else:
+        # Use the main poster path from search results
+        poster_path = search_res['results'][0].get('poster_path')
+        release_date = search_res['results'][0].get('release_date')[:4]
+    
+    if poster_path:
+        return [img_config_url + poster_path, release_date]
+    return "Poster not available."
+
+
 def fetch_imdb_info(title):
     try:
         r = requests.get(
@@ -37,50 +71,6 @@ def fetch_imdb_info(title):
         }
     except:
         return fetch_image_from_search(title)
-def fetch_fallback_poster(title):
-    """Try to get first Google Images or Wikipedia image for the series"""
-    import urllib.parse
-    try:
-        # First try Wikipedia
-        search_url = f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
-        html = requests.get(search_url, headers=HEADERS, timeout=10).text
-        soup = BeautifulSoup(html, "html.parser")
-        img = soup.select_one(".infobox img")
-        if img:
-            poster_url = "https:" + img.get("src")
-            return {
-                "rating": None,
-                "year": None,
-                "genre": None,
-                "poster": poster_url
-            }
-    except:
-        pass
-
-    try:
-        # Fallback: Google Images first result
-        query = urllib.parse.quote(title)
-        google_url = f"https://www.google.com/search?tbm=isch&q={query}"
-        html = requests.get(google_url, headers=HEADERS, timeout=10).text
-        soup = BeautifulSoup(html, "html.parser")
-        img = soup.select_one("img")
-        if img and img.get("src"):
-            return {
-                "rating": None,
-                "year": None,
-                "genre": None,
-                "poster": img.get("src")
-            }
-    except:
-        pass
-
-    # Final fallback
-    return {
-        "rating": None,
-        "year": None,
-        "genre": None,
-        "poster": "/static/no-poster.png"
-    }
 def fetch_image_from_search(title):
     """
     Get first image result from Bing Images search.
@@ -165,10 +155,20 @@ def init_db():
 def scrape_season(url):
     html = requests.get(url, headers=HEADERS, timeout=15).text
     soup = BeautifulSoup(html, "html.parser")
-
     episodes_div = soup.select_one(".d-flex.flex-column.items_container")
     if not episodes_div:
-        return []
+        html_ep = requests.get(url, headers=HEADERS, timeout=15).text
+        match = re.search(r"JSON\.parse\('(.+?)'\);", html_ep, re.DOTALL)
+        data = []
+        servers_json = match.group(1).encode().decode("unicode_escape")
+        servers = json.loads(servers_json)
+
+        data=[{
+            "episode": 0,
+            "url": url,
+            "servers": [(s["name"], s["url"]) for s in servers]
+        }]
+        return data
 
     episode_links = [a["href"] for a in episodes_div.find_all("a", href=True)]
 
@@ -182,7 +182,6 @@ def scrape_season(url):
 
         servers_json = match.group(1).encode().decode("unicode_escape")
         servers = json.loads(servers_json)
-
         data.append({
             "episode": idx+1,
             "url": ep_url,
@@ -195,9 +194,53 @@ def scrape_season(url):
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        preview = scrape_season(request.form["url"])
-        session["preview"] = preview
-        return redirect(url_for("index"))  # PRG
+        if request.form["url"].startswith("http"):
+            preview = scrape_season(request.form["url"])
+        else:
+            if request.form["type"]=='movie':
+                print(fetch_imdb_info(request.form["url"]))
+                _,year=get_media_poster(API_KEY, request.form["url"], media_type="movie")
+                print(year)
+                url_og='https://shaheid4u.day/watch/%D9%81%D9%8A%D9%84%D9%85-titanic-1997-%D9%85%D8%AA%D8%B1%D8%AC%D9%85'
+                url_new=url_og.replace("titanic-1997", f'{request.form["url"].replace(" ","-")}-{year}')
+                print(url_new)
+                preview = scrape_season(url_new)
+
+            else:
+                url_og='https://shaheid4u.day/watch/مسلسل-friends-الموسم-الاول-الحلقة-1-الاولي-مترجمة'
+                url_new=url_og.replace("friends", request.form["url"].replace(' ','-'))
+                url_new=url_new[:60].replace("الاول", seasons[int(request.form["season"])-1])+url_new[60:]
+                print(url_new)
+                for attempt in range(MAX_RETRIES):
+                    if attempt == 0:
+                        try:
+                            preview = scrape_season(url_new)
+                            break  # success → exit loop
+                        except :
+                            print(f"Invalid input. Attempts left: {MAX_RETRIES - attempt - 1}")
+                    elif attempt==1:
+                        try:
+                            # url_new=url_new[:60].replace("الاول", seasons[int(request.form["season"])-1])+url_new[60:]
+                            url_new=url_new[:60]+url_new[60:].replace('-الاولي','')
+                            print(url_new)
+                            preview = scrape_season(url_new)
+                            break  # success → exit loop
+                        except :
+                            print(f"Invalid input. Attempts left: {MAX_RETRIES - attempt - 1}")
+                    elif attempt==2:
+                        try:
+                            # url_new=url_new[:60].replace("الاول", seasons[int(request.form["season"])-1])+url_new[60:]
+                            url_new=url_new[:60]+url_new[60:].replace('-مترجمة','')
+                            print(url_new)
+                            preview = scrape_season(url_new)
+                            break  # success → exit loop
+                        except :
+                            print(f"Invalid input. Attempts left: {MAX_RETRIES - attempt - 1}")
+                    else:
+                        preview = []  # final failure
+
+        session["preview"] = preview 
+        return redirect(url_for("index")) # PRG
 
     preview = session.get("preview")
     return render_template("index.html", preview=preview)
@@ -319,8 +362,7 @@ def rename(cid):
 
 
 # ----------------
-import os
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Railway sets PORT automatically
-    app.run(host="0.0.0.0", port=port)
+    init_db()
+    app.run(host="0.0.0.0", port=5000)

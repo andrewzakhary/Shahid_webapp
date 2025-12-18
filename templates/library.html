@@ -12,6 +12,14 @@
     </script>
 </head>
 <body class="bg-light">
+<nav class="navbar navbar-light bg-light mb-3">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="{{ url_for('index') }}">Home / Preview</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('library') }}">Library</a>
+  </div>
+</nav>
+<!-- Your existing library content -->
+
 <div class="container py-4">
     <h1 class="mb-4">Library</h1>
 
